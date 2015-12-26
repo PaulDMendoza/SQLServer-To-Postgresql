@@ -18,13 +18,13 @@ namespace SQLToPostgresql
             var db = args.First(f => f.StartsWith("-db")).Replace("-db=", "");
 
             StringBuilder sql = new StringBuilder();
-            sql.AppendLine(string.Format(@"CREATE DATABASE {0}
-  WITH OWNER = postgres
-       ENCODING = 'UTF8'
-       TABLESPACE = pg_default
-       LC_COLLATE = 'English_United States.1252'
-       LC_CTYPE = 'English_United States.1252'
-       CONNECTION LIMIT = -1;", db.ToLower()));
+//            sql.AppendLine(string.Format(@"CREATE DATABASE {0}
+//  WITH OWNER = postgres
+//       ENCODING = 'UTF8'
+//       TABLESPACE = pg_default
+//       LC_COLLATE = 'English_United States.1252'
+//       LC_CTYPE = 'English_United States.1252'
+//       CONNECTION LIMIT = -1;", db.ToLower()));
 
             var connectionStringBuilder = new SqlConnectionStringBuilder();
             connectionStringBuilder.DataSource = server;
@@ -63,9 +63,23 @@ INNER JOIN
                 {
                     sql.AppendLine("CREATE TABLE " + table.TABLE_NAME.ToLower());
                     sql.AppendLine("(");
+                    int columnOrdinal = 0;
                     foreach (var column in columns.Where(c => c.TABLE_NAME == table.TABLE_NAME))
                     {
-                        sql.Append("\t" + column.COLUMN_NAME + " ");
+                        if (column.DATA_TYPE == "geography")
+                            continue; // This isn't a supported type in Postgresql.
+
+                        if (columnOrdinal > 0)
+                            sql.Append("\t,");
+                        else
+                            sql.Append("\t");
+
+                         
+
+                        sql.Append("\"" + column.COLUMN_NAME.ToLower() + "\" ");
+
+                        
+
                         if (column.DATA_TYPE == "uniqueidentifier")
                         {
                             sql.Append("uuid");
@@ -78,7 +92,7 @@ INNER JOIN
                         {
                             sql.Append("text");
                         }
-                        else if (column.DATA_TYPE == "datetime")
+                        else if (column.DATA_TYPE == "datetimeoffset" || column.DATA_TYPE == "smalldatetime")
                         {
                             sql.Append("timestamp");
                         }
@@ -117,17 +131,26 @@ INNER JOIN
                         if (column.COLUMN_DEFAULT != null)
                         {
                             // This is hardcoded to my implementation for my data.
-                            if (column.COLUMN_DEFAULT == "((0))")
+                            if (column.DATA_TYPE == "bit" && column.COLUMN_DEFAULT == "((0))")
                             {
                                 sql.Append(" DEFAULT FALSE");
                             }
-                            else if (column.COLUMN_DEFAULT == "(getutcdate())")
+                            else if (column.DATA_TYPE == "bit" && column.COLUMN_DEFAULT == "((1))")
+                            {
+                                sql.Append(" DEFAULT TRUE");
+                            }
+                            else if(column.DATA_TYPE == "int")
+                            {
+                                sql.Append(" DEFAULT " +  column.COLUMN_DEFAULT.Replace("(", "").Replace(")", ""));
+                            }
+                            else if (column.COLUMN_DEFAULT == "(getutcdate())" || column.DATA_TYPE == "datetimeoffset" || column.DATA_TYPE == "datetime")
                             {
                                 sql.Append(" DEFAULT timezone('utc'::text, now())");
                             }
                         }
 
                         sql.AppendLine();
+                        columnOrdinal++;
 
                     }
                     sql.AppendLine(") WITH ( OIDS=FALSE);");
@@ -144,7 +167,7 @@ INNER JOIN
                         var pkColumnObjs = indexColumns.Where(c => c.IndexName == tableConstraint.CONSTRAINT_NAME).Select(s => new { COLUMN_NAME = s.ColumnName, ORDER = s.ColumnId });
                         var pkColumns = string.Join(",", pkColumnObjs.OrderBy(s => s.ORDER).Select(s => s.COLUMN_NAME));
                         string primaryKey = string.Format(@"ALTER TABLE {2}
-  ADD CONSTRAINT {0} PRIMARY KEY({1});", tableConstraint.CONSTRAINT_NAME.ToString().ToLower(), pkColumns.ToLower(), tableConstraint.TABLE_NAME.ToLower());
+  ADD CONSTRAINT {0} PRIMARY KEY({1});", tableConstraint.CONSTRAINT_NAME.ToString().ToLower().Replace("[", "").Replace("]", ""), pkColumns.ToLower(), tableConstraint.TABLE_NAME.ToLower());
                         sql.AppendLine(primaryKey);
                     }
                 }
